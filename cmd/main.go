@@ -24,7 +24,8 @@ USAGE:
   shellcast highlights          Show highlighted commands
   shellcast marks               Show bookmarked commands
   shellcast search <query>      Search commands and output
-  shellcast proof <cmd-id>      Generate PNG screenshot
+  shellcast shot <id|range>     Generate PNG screenshot
+  shellcast shot 3 -o name.png  Custom output filename
   shellcast export              Export markdown report
   shellcast sessions            List all sessions
   shellcast mark <id> [tag]     Mark a command retroactively
@@ -50,7 +51,7 @@ func main() {
 		doMarks()
 	case "search":
 		doSearch()
-	case "proof":
+	case "shot":
 		doProof()
 	case "export":
 		doExport()
@@ -160,7 +161,7 @@ func doSearch() {
 
 func doProof() {
 	if len(os.Args) < 3 {
-		fatal("usage: shellcast proof <cmd-id|from-to> [-o filename.png]")
+		fatal("usage: shellcast shot <cmd-id|from-to> [-o filename.png]")
 	}
 	db, _ := storage.Open()
 	defer db.Close()
