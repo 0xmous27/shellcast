@@ -2,135 +2,143 @@ package render
 
 import (
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
+
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/basicfont"
+	"golang.org/x/image/math/fixed"
 )
 
-func ScreenshotDir(sessionID string) string {
+var (
+	bgColor    = color.RGBA{30, 30, 30, 255}
+	fgColor    = color.RGBA{204, 204, 204, 255}
+	promptColor = color.RGBA{80, 250, 123, 255}
+	dimColor   = color.RGBA{100, 100, 100, 255}
+	headerBg   = color.RGBA{40, 40, 40, 255}
+)
+
+// ProofDir returns the proof output directory
+func ProofDir() string {
 	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, ".shellcast", "screenshots", sessionID)
+	dir := filepath.Join(home, "shellcast", "proofs")
 	os.MkdirAll(dir, 0755)
 	return dir
 }
 
-// CaptureWindow takes a real screenshot of the terminal window.
-// On native Linux: uses scrot/maim/import (real pixel screenshot).
-// On WSL: uses PowerShell to capture the Windows Terminal window.
-func CaptureWindow(sessionID string, cmdID int) (string, error) {
-	dir := ScreenshotDir(sessionID)
-	filename := filepath.Join(dir, fmt.Sprintf("cmd_%04d.png", cmdID))
-
-	// Small delay to let output render
-	time.Sleep(200 * time.Millisecond)
-
-	if isWSL() {
-		return captureWSL(filename)
+// GenerateProof renders a command + output as a terminal-style PNG
+func GenerateProof(filename, input, cleanOutput string) error {
+	// Build lines
+	var lines []pngLine
+	lines = append(lines, pngLine{"$ " + input, promptColor})
+	for _, l := range strings.Split(cleanOutput, "\n") {
+		if len(l) > 120 {
+			l = l[:117] + "..."
+		}
+		lines = append(lines, pngLine{l, fgColor})
 	}
-	return captureLinux(filename)
-}
 
-// captureLinux uses native X11 screenshot tools (real PrtScr-quality screenshots)
-func captureLinux(filename string) (string, error) {
-	// scrot: most common on Kali/Debian
-	if run("scrot", "-u", "-o", filename) == nil {
-		return filename, nil
-	}
-	// maim + xdotool
-	if wid := getActiveWindow(); wid != "" {
-		if run("maim", "-i", wid, filename) == nil {
-			return filename, nil
+	// Dimensions
+	charW := 7  // basicfont width
+	lineH := 18
+	padX := 24
+	padY := 20
+	headerH := 36
+
+	maxW := 0
+	for _, l := range lines {
+		w := len(l.text) * charW
+		if w > maxW {
+			maxW = w
 		}
 	}
-	// import (ImageMagick)
-	if wid := getActiveWindow(); wid != "" {
-		if run("import", "-window", wid, filename) == nil {
-			return filename, nil
+	imgW := maxW + padX*2
+	if imgW < 600 {
+		imgW = 600
+	}
+	if imgW > 1200 {
+		imgW = 1200
+	}
+	imgH := headerH + len(lines)*lineH + padY*2
+
+	img := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
+
+	// Fill background
+	fillRect(img, 0, 0, imgW, imgH, bgColor)
+
+	// Header bar (window chrome)
+	fillRect(img, 0, 0, imgW, headerH, headerBg)
+	// Dots
+	drawCircle(img, 18, headerH/2, 6, color.RGBA{255, 95, 86, 255})
+	drawCircle(img, 38, headerH/2, 6, color.RGBA{255, 189, 46, 255})
+	drawCircle(img, 58, headerH/2, 6, color.RGBA{39, 201, 63, 255})
+	// Title
+	drawText(img, imgW/2-30, headerH/2+4, "shellcast", dimColor)
+
+	// Draw lines
+	face := basicfont.Face7x13
+	y := headerH + padY + 13
+	for _, l := range lines {
+		drawTextFace(img, padX, y, l.text, l.clr, face)
+		y += lineH
+	}
+
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return png.Encode(f, img)
+}
+
+type pngLine struct {
+	text string
+	clr  color.RGBA
+}
+
+func fillRect(img *image.RGBA, x, y, w, h int, c color.RGBA) {
+	for py := y; py < y+h; py++ {
+		for px := x; px < x+w; px++ {
+			img.Set(px, py, c)
 		}
 	}
-	return "", fmt.Errorf("no screenshot tool found")
 }
 
-// captureWSL uses PowerShell to screenshot the active window on Windows
-func captureWSL(filename string) (string, error) {
-	// Convert WSL path to Windows path for saving
-	absPath, _ := filepath.Abs(filename)
-
-	// PowerShell script to capture the foreground window
-	ps := fmt.Sprintf(`
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-using System.Drawing;
-using System.Drawing.Imaging;
-public class Screenshot {
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")]
-    public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-    [StructLayout(LayoutKind.Sequential)]
-    public struct RECT { public int Left, Top, Right, Bottom; }
-    public static void Capture(string path) {
-        IntPtr hwnd = GetForegroundWindow();
-        RECT r;
-        GetWindowRect(hwnd, out r);
-        int w = r.Right - r.Left;
-        int h = r.Bottom - r.Top;
-        if (w <= 0 || h <= 0) return;
-        Bitmap bmp = new Bitmap(w, h);
-        Graphics g = Graphics.FromImage(bmp);
-        g.CopyFromScreen(r.Left, r.Top, 0, 0, new Size(w, h));
-        bmp.Save(path, ImageFormat.Png);
-    }
+func drawCircle(img *image.RGBA, cx, cy, r int, c color.RGBA) {
+	for y := -r; y <= r; y++ {
+		for x := -r; x <= r; x++ {
+			if x*x+y*y <= r*r {
+				img.Set(cx+x, cy+y, c)
+			}
+		}
+	}
 }
-"@ -ReferencedAssemblies System.Drawing,System.Drawing.Common
-[Screenshot]::Capture("%s")
-`, toWindowsPath(absPath))
 
-	cmd := exec.Command("powershell.exe", "-NoProfile", "-Command", ps)
-	if err := cmd.Run(); err != nil {
+func drawText(img *image.RGBA, x, y int, text string, c color.RGBA) {
+	drawTextFace(img, x, y, text, c, basicfont.Face7x13)
+}
+
+func drawTextFace(img *image.RGBA, x, y int, text string, c color.RGBA, face font.Face) {
+	d := &font.Drawer{
+		Dst:  img,
+		Src:  image.NewUniform(c),
+		Face: face,
+		Dot:  fixed.P(x, y),
+	}
+	d.DrawString(text)
+}
+
+// GenerateProofFile is a convenience wrapper
+func GenerateProofFile(cmdID int64, input, cleanOutput string) (string, error) {
+	dir := ProofDir()
+	filename := filepath.Join(dir, fmt.Sprintf("proof_%d.png", cmdID))
+	err := GenerateProof(filename, input, cleanOutput)
+	if err != nil {
 		return "", err
 	}
-
-	// Check if file was created
-	if _, err := os.Stat(filename); err == nil {
-		return filename, nil
-	}
-	return "", fmt.Errorf("WSL screenshot failed")
-}
-
-func isWSL() bool {
-	data, err := os.ReadFile("/proc/version")
-	if err != nil {
-		return false
-	}
-	lower := strings.ToLower(string(data))
-	return strings.Contains(lower, "microsoft") || strings.Contains(lower, "wsl")
-}
-
-func toWindowsPath(linuxPath string) string {
-	// Convert /home/user/... to \\wsl$\distro\home\user\... or use wslpath
-	out, err := exec.Command("wslpath", "-w", linuxPath).Output()
-	if err != nil {
-		// Fallback: try direct conversion
-		return strings.ReplaceAll(linuxPath, "/", "\\")
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func getActiveWindow() string {
-	out, err := exec.Command("xdotool", "getactivewindow").Output()
-	if err != nil || len(out) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func run(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
+	return filename, nil
 }

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"database/sql"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,94 +10,82 @@ import (
 	"github.com/0xmous27/shellcast/pkg/models"
 )
 
-func DBPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".shellcast", "shellcast.db")
-}
-
 func Open() (*sql.DB, error) {
-	p := DBPath()
-	os.MkdirAll(filepath.Dir(p), 0755)
-	db, err := sql.Open("sqlite3", p+"?_journal_mode=WAL")
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".shellcast")
+	os.MkdirAll(dir, 0755)
+	db, err := sql.Open("sqlite3", filepath.Join(dir, "shellcast.db"))
 	if err != nil {
 		return nil, err
 	}
-	_, err = db.Exec(`
+	db.Exec(`
 		CREATE TABLE IF NOT EXISTS sessions (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL,
-			started_at DATETIME NOT NULL,
-			ended_at DATETIME,
-			commands INTEGER DEFAULT 0
+			id INTEGER PRIMARY KEY,
+			name TEXT,
+			started_at DATETIME,
+			ended_at DATETIME
 		);
 		CREATE TABLE IF NOT EXISTS commands (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			input TEXT NOT NULL,
+			id INTEGER PRIMARY KEY,
+			session_id INTEGER,
+			input TEXT,
 			output_raw TEXT,
 			output_clean TEXT,
 			exit_code INTEGER DEFAULT 0,
-			timestamp DATETIME NOT NULL,
-			duration_ms REAL DEFAULT 0,
+			timestamp DATETIME,
+			duration_ms INTEGER DEFAULT 0,
 			marked INTEGER DEFAULT 0,
 			tag TEXT DEFAULT '',
-			highlight INTEGER DEFAULT 0,
-			FOREIGN KEY (session_id) REFERENCES sessions(id)
+			highlight INTEGER DEFAULT 0
 		);
-		CREATE INDEX IF NOT EXISTS idx_cmd_session ON commands(session_id);
-		CREATE INDEX IF NOT EXISTS idx_cmd_marked ON commands(session_id, marked);
 	`)
-	return db, err
+	return db, nil
 }
 
-func CreateSession(db *sql.DB, name string) (*models.Session, error) {
-	id := fmt.Sprintf("%s-%d", name, time.Now().Unix())
-	s := &models.Session{ID: id, Name: name, StartedAt: time.Now()}
-	_, err := db.Exec("INSERT INTO sessions (id, name, started_at) VALUES (?,?,?)", s.ID, s.Name, s.StartedAt)
-	return s, err
+func CreateSession(db *sql.DB, name string) (int64, error) {
+	res, err := db.Exec("INSERT INTO sessions (name, started_at) VALUES (?, ?)", name, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
 }
 
-func EndSession(db *sql.DB, id string) error {
-	_, err := db.Exec("UPDATE sessions SET ended_at=? WHERE id=?", time.Now(), id)
-	return err
+func EndSession(db *sql.DB, id int64) {
+	db.Exec("UPDATE sessions SET ended_at = ? WHERE id = ?", time.Now(), id)
 }
 
-func SaveCommand(db *sql.DB, cmd *models.Command) error {
+func SaveCommand(db *sql.DB, cmd *models.Command) (int64, error) {
 	res, err := db.Exec(
-		`INSERT INTO commands (session_id,input,output_raw,output_clean,exit_code,timestamp,duration_ms,marked,tag,highlight)
-		 VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		`INSERT INTO commands (session_id, input, output_raw, output_clean, exit_code, timestamp, duration_ms, marked, tag, highlight)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		cmd.SessionID, cmd.Input, cmd.OutputRaw, cmd.OutputClean, cmd.ExitCode,
 		cmd.Timestamp, cmd.DurationMs, cmd.Marked, cmd.Tag, cmd.Highlight)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	id, _ := res.LastInsertId()
-	cmd.ID = int(id)
-	_, _ = db.Exec("UPDATE sessions SET commands=commands+1 WHERE id=?", cmd.SessionID)
-	return nil
+	return res.LastInsertId()
 }
 
-func MarkCommand(db *sql.DB, id int, tag string) error {
-	_, err := db.Exec("UPDATE commands SET marked=1, tag=? WHERE id=?", tag, id)
-	return err
+func MarkCommand(db *sql.DB, id int64, tag string) {
+	db.Exec("UPDATE commands SET marked = 1, tag = ? WHERE id = ?", tag, id)
 }
 
 func GetLatestSession(db *sql.DB) (*models.Session, error) {
 	s := &models.Session{}
 	var end sql.NullTime
-	err := db.QueryRow("SELECT id,name,started_at,ended_at,commands FROM sessions ORDER BY started_at DESC LIMIT 1").
-		Scan(&s.ID, &s.Name, &s.StartedAt, &end, &s.Commands)
+	err := db.QueryRow("SELECT id, name, started_at, ended_at FROM sessions ORDER BY id DESC LIMIT 1").
+		Scan(&s.ID, &s.Name, &s.StartedAt, &end)
 	if end.Valid {
 		s.EndedAt = end.Time
 	}
 	return s, err
 }
 
-func GetSession(db *sql.DB, id string) (*models.Session, error) {
+func GetSession(db *sql.DB, id int64) (*models.Session, error) {
 	s := &models.Session{}
 	var end sql.NullTime
-	err := db.QueryRow("SELECT id,name,started_at,ended_at,commands FROM sessions WHERE id=?", id).
-		Scan(&s.ID, &s.Name, &s.StartedAt, &end, &s.Commands)
+	err := db.QueryRow("SELECT id, name, started_at, ended_at FROM sessions WHERE id = ?", id).
+		Scan(&s.ID, &s.Name, &s.StartedAt, &end)
 	if end.Valid {
 		s.EndedAt = end.Time
 	}
@@ -106,7 +93,7 @@ func GetSession(db *sql.DB, id string) (*models.Session, error) {
 }
 
 func ListSessions(db *sql.DB) ([]models.Session, error) {
-	rows, err := db.Query("SELECT id,name,started_at,ended_at,commands FROM sessions ORDER BY started_at DESC")
+	rows, err := db.Query("SELECT id, name, started_at, ended_at FROM sessions ORDER BY id DESC")
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +102,7 @@ func ListSessions(db *sql.DB) ([]models.Session, error) {
 	for rows.Next() {
 		var s models.Session
 		var end sql.NullTime
-		rows.Scan(&s.ID, &s.Name, &s.StartedAt, &end, &s.Commands)
+		rows.Scan(&s.ID, &s.Name, &s.StartedAt, &end)
 		if end.Valid {
 			s.EndedAt = end.Time
 		}
@@ -124,9 +111,24 @@ func ListSessions(db *sql.DB) ([]models.Session, error) {
 	return out, nil
 }
 
-func queryCommands(db *sql.DB, where string, args ...interface{}) ([]models.Command, error) {
-	q := "SELECT id,session_id,input,output_raw,output_clean,exit_code,timestamp,duration_ms,marked,tag,highlight FROM commands WHERE " + where + " ORDER BY id"
-	rows, err := db.Query(q, args...)
+func GetCommands(db *sql.DB, sessionID int64) ([]models.Command, error) {
+	return queryCmd(db, "session_id = ?", sessionID)
+}
+
+func GetHighlights(db *sql.DB, sessionID int64) ([]models.Command, error) {
+	return queryCmd(db, "session_id = ? AND (highlight = 1 OR marked = 1)", sessionID)
+}
+
+func GetMarks(db *sql.DB, sessionID int64) ([]models.Command, error) {
+	return queryCmd(db, "session_id = ? AND marked = 1", sessionID)
+}
+
+func SearchCommands(db *sql.DB, sessionID int64, q string) ([]models.Command, error) {
+	return queryCmd(db, "session_id = ? AND (input LIKE ? OR output_clean LIKE ?)", sessionID, "%"+q+"%", "%"+q+"%")
+}
+
+func queryCmd(db *sql.DB, where string, args ...interface{}) ([]models.Command, error) {
+	rows, err := db.Query("SELECT id, session_id, input, output_raw, output_clean, exit_code, timestamp, duration_ms, marked, tag, highlight FROM commands WHERE "+where+" ORDER BY id", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,24 +140,4 @@ func queryCommands(db *sql.DB, where string, args ...interface{}) ([]models.Comm
 		out = append(out, c)
 	}
 	return out, nil
-}
-
-func GetCommands(db *sql.DB, sessionID string) ([]models.Command, error) {
-	return queryCommands(db, "session_id=?", sessionID)
-}
-
-func GetHighlights(db *sql.DB, sessionID string) ([]models.Command, error) {
-	return queryCommands(db, "session_id=? AND (highlight=1 OR marked=1)", sessionID)
-}
-
-func GetMarks(db *sql.DB, sessionID string) ([]models.Command, error) {
-	return queryCommands(db, "session_id=? AND marked=1", sessionID)
-}
-
-func SearchCommands(db *sql.DB, sessionID, query string) ([]models.Command, error) {
-	return queryCommands(db, "session_id=? AND (input LIKE ? OR output_clean LIKE ?)", sessionID, "%"+query+"%", "%"+query+"%")
-}
-
-func GetCommandRange(db *sql.DB, sessionID string, from, to int) ([]models.Command, error) {
-	return queryCommands(db, "session_id=? AND id>=? AND id<=?", sessionID, from, to)
 }

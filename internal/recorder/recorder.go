@@ -1,16 +1,13 @@
 package recorder
 
 import (
-	"bufio"
 	"database/sql"
-	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -18,18 +15,18 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/0xmous27/shellcast/internal/highlight"
-	"github.com/0xmous27/shellcast/internal/render"
+	"github.com/0xmous27/shellcast/internal/parser"
 	"github.com/0xmous27/shellcast/internal/storage"
 	"github.com/0xmous27/shellcast/pkg/models"
 )
 
 type Recorder struct {
 	db        *sql.DB
-	sessionID string
-	lastID    int
+	sessionID int64
+	lastCmdID int64
 }
 
-func New(db *sql.DB, sessionID string) *Recorder {
+func New(db *sql.DB, sessionID int64) *Recorder {
 	return &Recorder{db: db, sessionID: sessionID}
 }
 
@@ -39,37 +36,16 @@ func (r *Recorder) Run() error {
 		shell = "/bin/bash"
 	}
 
-	// Unix socket for shell hook
-	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("sc_%d.sock", os.Getpid()))
-	os.Remove(sockPath)
-	listener, err := net.Listen("unix", sockPath)
-	if err != nil {
-		return fmt.Errorf("socket: %w", err)
-	}
-	defer listener.Close()
-	defer os.Remove(sockPath)
-
-	// Write a small env file that gets sourced
-	hookContent := fmt.Sprintf(`__sc_hook() { local cmd=$(HISTTIMEFORMAT= history 1 | sed 's/^[ ]*[0-9]*[ ]*//'); [ -n "$cmd" ] && echo "$cmd" | socat - UNIX-CONNECT:%s 2>/dev/null; }; PROMPT_COMMAND="__sc_hook;${PROMPT_COMMAND:-:}"`, sockPath)
-	hookFile := filepath.Join(os.TempDir(), fmt.Sprintf("sc_hook_%d.sh", os.Getpid()))
-	os.WriteFile(hookFile, []byte(hookContent), 0644)
-	defer os.Remove(hookFile)
-
-	// Start shell with BASH_ENV so hook loads automatically
-	c := exec.Command(shell, "-i")
-	env := os.Environ()
-	env = append(env, "SHELLCAST_SESSION="+r.sessionID)
-	// BASH_ENV is sourced for interactive shells when combined with --rcfile workaround
-	// Instead, we use --init-file approach but source user's rc first
-	c.Env = env
+	c := exec.Command(shell)
+	c.Env = os.Environ()
 
 	ptmx, err := pty.Start(c)
 	if err != nil {
-		return fmt.Errorf("pty: %w", err)
+		return err
 	}
 	defer ptmx.Close()
 
-	// Resize
+	// Handle resize
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGWINCH)
 	go func() {
@@ -82,84 +58,127 @@ func (r *Recorder) Run() error {
 	// Raw mode
 	old, err := setRaw(os.Stdin.Fd())
 	if err != nil {
-		return fmt.Errorf("raw: %w", err)
+		return err
 	}
 	defer restoreTerminal(os.Stdin.Fd(), old)
 
-	// Listen for commands
-	go r.listenCommands(listener)
+	var mu sync.Mutex
+	var inputLine []byte      // current line being typed
+	var outputBuf []byte      // output since last command
+	var pendingCmd string     // command waiting for output
+	var cmdStart time.Time    // when pending command was submitted
+	promptReady := false      // have we seen at least one prompt cycle
 
-	// Inject hook after shell is ready
+	// stdin → pty (capture input keystrokes)
 	go func() {
-		time.Sleep(800 * time.Millisecond)
-		// Source the hook file silently
-		inject := fmt.Sprintf(" source %s\n", hookFile)
-		ptmx.Write([]byte(inject))
+		buf := make([]byte, 256)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if err != nil {
+				return
+			}
+			// Always forward to PTY immediately
+			ptmx.Write(buf[:n])
+
+			mu.Lock()
+			for _, b := range buf[:n] {
+				switch {
+				case b == '\r' || b == '\n':
+					cmd := strings.TrimSpace(string(inputLine))
+					inputLine = inputLine[:0]
+
+					if cmd == "" {
+						mu.Unlock()
+						goto next
+					}
+
+					// Save previous command now (we have its output)
+					if pendingCmd != "" && promptReady {
+						r.saveCmd(pendingCmd, string(outputBuf), cmdStart)
+					}
+
+					// This new command becomes pending
+					pendingCmd = cmd
+					outputBuf = outputBuf[:0]
+					cmdStart = time.Now()
+					promptReady = true
+
+				case b == 127 || b == 8: // backspace/delete
+					if len(inputLine) > 0 {
+						inputLine = inputLine[:len(inputLine)-1]
+					}
+				case b == 3: // Ctrl+C — cancel current input
+					inputLine = inputLine[:0]
+				case b == 21: // Ctrl+U — clear line
+					inputLine = inputLine[:0]
+				case b == 0x1b: // ESC — start of escape sequence, skip
+					// We'll handle this by ignoring until we get a letter
+					// For now just don't add ESC to input
+				case b >= 32 && b < 127: // printable ASCII
+					inputLine = append(inputLine, b)
+				}
+			}
+			mu.Unlock()
+		next:
+		}
 	}()
 
-	// stdin → pty
-	go func() {
-		io.Copy(ptmx, os.Stdin)
-	}()
+	// pty → stdout (capture output)
+	buf := make([]byte, 8192)
+	for {
+		n, err := ptmx.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				// ignore
+			}
+			break
+		}
+		// Always display to user
+		os.Stdout.Write(buf[:n])
 
-	// pty → stdout
-	io.Copy(os.Stdout, ptmx)
+		// Capture output for pending command
+		mu.Lock()
+		if pendingCmd != "" {
+			outputBuf = append(outputBuf, buf[:n]...)
+		}
+		mu.Unlock()
+	}
+
+	// Save final pending command
+	mu.Lock()
+	if pendingCmd != "" && promptReady {
+		r.saveCmd(pendingCmd, string(outputBuf), cmdStart)
+	}
+	mu.Unlock()
 
 	c.Wait()
 	return nil
 }
 
-func (r *Recorder) listenCommands(listener net.Listener) {
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		go func(c net.Conn) {
-			defer c.Close()
-			scanner := bufio.NewScanner(c)
-			for scanner.Scan() {
-				r.saveCommand(scanner.Text())
-			}
-		}(conn)
-	}
-}
+func (r *Recorder) saveCmd(input, rawOutput string, start time.Time) {
+	cleanOutput := parser.Clean(rawOutput)
+	duration := time.Since(start).Milliseconds()
 
-func (r *Recorder) saveCommand(input string) {
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return
-	}
-	// Skip our own hook commands
-	if strings.HasPrefix(input, "source /tmp/sc_hook") || strings.HasPrefix(input, " source /tmp/sc_hook") {
-		return
-	}
-	if strings.Contains(input, "__sc_hook") {
-		return
+	// Handle #mark
+	if isMark, tag := highlight.IsMark(input); isMark {
+		if r.lastCmdID > 0 {
+			storage.MarkCommand(r.db, r.lastCmdID, tag)
+		}
+		return // don't store the #mark itself as a command
 	}
 
 	cmd := &models.Command{
 		SessionID:   r.sessionID,
 		Input:       input,
-		OutputClean: "",
-		OutputRaw:   "",
-		Timestamp:   time.Now(),
+		OutputRaw:   rawOutput,
+		OutputClean: cleanOutput,
+		Timestamp:   start,
+		DurationMs:  duration,
+		Highlight:   highlight.IsHighlight(input, cleanOutput),
 	}
 
-	if isMark, tag := highlight.IsMark(input); isMark {
-		cmd.Marked = true
-		cmd.Tag = tag
-		if r.lastID > 0 {
-			storage.MarkCommand(r.db, r.lastID, tag)
-		}
-	}
-
-	cmd.Highlight = highlight.IsHighlight(input, "")
-	storage.SaveCommand(r.db, cmd)
-	r.lastID = cmd.ID
-
-	// Take screenshot async
-	go render.CaptureWindow(r.sessionID, cmd.ID)
+	id, _ := storage.SaveCommand(r.db, cmd)
+	r.lastCmdID = id
 }
 
 type termState syscall.Termios

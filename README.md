@@ -1,32 +1,28 @@
 # ⚡ ShellCast
 
-Terminal session recorder for pentesters. Automatically captures **real screenshots** of your terminal after every command. Export evidence for CPTS reports, bug bounty writeups, Medium posts, or client deliverables.
+Terminal session evidence recorder for pentesters. Record commands + output, search history, generate professional terminal-style PNG screenshots and markdown reports.
 
 ## The Problem
 
-You finish a 2-hour pentest session and need to write a report. You forgot to screenshot. You can't remember exact commands. You're scrolling terminal history trying to reconstruct what happened.
+You finish a pentest session and need to write a report. You forgot to screenshot. You can't remember exact commands. Terminal history is gone.
 
 ## The Solution
 
 ```bash
-shellcast start client-x    # wraps your shell, records + screenshots everything
-# ... do your normal pentesting ...
-#mark privesc               # bookmark important moments
-exit                        # stop recording
+shellcast start engagement-1
+# ... normal pentesting ...
+#mark privesc
+exit
 
-shellcast show              # see all commands captured
-shellcast proof 4           # open screenshot of command #4
-shellcast proof --marks     # list bookmarked screenshots
-shellcast export > report.md  # markdown report
+shellcast show              # command timeline
+shellcast search "root"     # find moments
+shellcast proof 12          # generate PNG screenshot
+shellcast export > report.md
 ```
-
-Every screenshot is a **real PNG of your actual terminal window** — not rendered text, not fake terminal graphics. The same quality as pressing PrtScr.
 
 ---
 
-## Installation
-
-### Build from source
+## Install
 
 ```bash
 git clone https://github.com/0xmous27/shellcast
@@ -35,174 +31,147 @@ go build -o shellcast ./cmd/
 sudo mv shellcast /usr/local/bin/
 ```
 
-### Dependencies
-
-**Required (all platforms):**
-```bash
-sudo apt install socat
-```
-
-**For screenshots on native Linux (Kali, Ubuntu, Parrot with desktop):**
-```bash
-sudo apt install scrot xdotool
-```
-
-**For screenshots on WSL:**
-- No extra install needed — uses PowerShell to capture the Windows Terminal window automatically.
-
----
-
-## Platform Support
-
-| Platform | Command Recording | Screenshots | Quality |
-|----------|------------------|-------------|---------|
-| **Linux desktop** (Kali, Ubuntu, Parrot) | ✅ | ✅ Real PrtScr-quality | Best — native X11 capture |
-| **WSL2** (Windows Terminal) | ✅ | ✅ Via PowerShell | Good — captures Windows Terminal window |
-| **SSH session** | ✅ | ❌ No display | Commands only, no screenshots |
+**Requirements:** Go 1.21+ and `gcc` (for SQLite).
 
 ---
 
 ## Usage
 
-### Record a Session
+### Record
 
 ```bash
-shellcast start <engagement-name>
+shellcast start <name>
 ```
 
-Your normal shell appears. Everything works exactly as before — your prompt, colors, terminal picture, aliases, all of it. ShellCast runs invisibly in the background.
+Your shell works 100% normally. No modified prompt, no lag, no broken behavior. ShellCast records silently via PTY.
 
-### Bookmark Moments (during session)
+### Bookmark (during session)
 
 ```bash
-#mark initial-access     # tags the previous command as important
+#mark initial-access
 #mark privesc
-#mark lateral-move
+#mark domain-admin
 ```
 
-### End Session
+Tags the **previous** command. Doesn't execute in shell.
+
+### Review
 
 ```bash
-exit
+shellcast show              # full timeline
+shellcast highlights        # auto-detected interesting commands
+shellcast marks             # bookmarked only
+shellcast search "password" # search input + output
+shellcast sessions          # list all sessions
 ```
 
-### Review After Session
+### Export
 
 ```bash
-shellcast sessions              # list all recorded sessions
-shellcast show [session-id]     # all commands captured
-shellcast highlights [id]       # auto-highlighted interesting commands
-shellcast marks [id]            # bookmarked commands only
-shellcast search "password"     # search by keyword
-shellcast mark 12 "creds"       # retroactively mark command #12
+shellcast export > report.md        # markdown report
+shellcast proof <cmd-id>            # PNG terminal screenshot
 ```
 
-### Export Evidence
+### Retroactive Mark
 
 ```bash
-shellcast proof 4               # open screenshot #4
-shellcast proof 3-7             # list screenshots for range
-shellcast proof --marks         # bookmarked screenshots
-shellcast proof --all           # all screenshots
-shellcast export > report.md    # markdown report
+shellcast mark 15 "creds-found"
 ```
+
+---
+
+## PNG Proof Screenshots
+
+`shellcast proof <id>` generates a **professional terminal-style PNG**:
+
+- Dark background
+- Monospace font
+- Window chrome (macOS-style dots)
+- Green prompt, white output
+- Ready for reports, Medium posts, Twitter
+
+Output: `~/shellcast/proofs/proof_<id>.png`
 
 ---
 
 ## Auto-Highlighting
 
-ShellCast automatically flags interesting commands:
+Flags commands containing:
+`whoami`, `root`, `password`, `ssh`, `sqlmap`, `nuclei`, `linpeas`, `sudo`, `nmap`, `hashcat`, `hydra`, `meterpreter`, `dump`, `cred`...
 
-- **Security keywords:** `whoami`, `root`, `password`, `shell`, `dump`, `ssh`, `sudo`, `nmap`, `sqlmap`, `hashcat`...
-- **Skips noise:** `ls`, `cd`, `pwd`, `clear`, `history`
+Ignores noise: `ls`, `cd`, `pwd`, `clear`, `history`
+
+Also highlights commands with significant output (>5 lines).
+
+---
+
+## Storage
+
+```
+~/.shellcast/
+└── shellcast.db        # SQLite — commands, output, timestamps
+~/shellcast/
+└── proofs/             # Generated PNG screenshots
+```
+
+Everything local. No cloud. No telemetry.
 
 ---
 
 ## How It Works
 
-1. `shellcast start` spawns your shell inside a PTY (transparent wrapper)
-2. A lightweight hook (`PROMPT_COMMAND`) reports each command via unix socket
-3. After each command, a real screenshot of your terminal window is saved
-4. Commands are stored in SQLite with timestamps
-5. On `exit`, session is closed and all data persists
+1. `shellcast start` spawns your shell inside a PTY
+2. Stdin keystrokes are captured to reconstruct commands (Enter, backspace, Ctrl+C handled)
+3. PTY output is captured and stored (both raw + cleaned)
+4. On exit, session is saved
+5. `shellcast proof` renders stored output as terminal-style PNG using Go image libraries
 
-```
-~/.shellcast/
-├── shellcast.db                    # SQLite (commands, sessions)
-└── screenshots/
-    └── <session-id>/
-        ├── cmd_0001.png            # real terminal screenshot
-        ├── cmd_0002.png
-        └── ...
-```
-
-Everything stays local. Nothing leaves your machine.
+**No shell modification.** No aliases, no PROMPT_COMMAND, no rcfile injection. Pure PTY passthrough.
 
 ---
 
 ## Testing
 
-### On WSL
-
 ```bash
+# Build
+go build -o shellcast ./cmd/
+
+# Record
 rm -f ~/.shellcast/shellcast.db
 ./shellcast start test
 
-# Run commands:
+# Inside session:
 echo hello
-ls
-id
+ls /tmp
 cat /etc/passwd
-#mark test-bookmark
+id
+whoami
+#mark test-proof
 exit
 
-# Check results:
-./shellcast show              # should list all commands cleanly
-./shellcast highlights        # security-relevant ones flagged
-./shellcast marks             # bookmarked ones
-./shellcast proof --all       # screenshots (captured via PowerShell)
-```
+# Review:
+./shellcast show
+./shellcast highlights
+./shellcast marks
+./shellcast search "passwd"
 
-### On Native Linux (Kali desktop)
+# Generate proof PNG:
+./shellcast proof 3
 
-```bash
-sudo apt install scrot xdotool socat
-./shellcast start engagement-1
-
-# Do your pentesting...
-nmap -p- 10.10.10.5
-gobuster dir -u http://10.10.10.5 -w /usr/share/wordlists/common.txt
-sqlmap -u "http://10.10.10.5/page?id=1" --os-shell
-#mark shell-access
-exit
-
-# Evidence ready:
-./shellcast proof --marks     # real terminal screenshots
+# Export markdown:
 ./shellcast export > report.md
-ls ~/.shellcast/screenshots/  # PNG files ready for your report
 ```
-
----
-
-## Use Cases
-
-- **CPTS/OSCP reports** — real terminal screenshots, timestamped
-- **Bug bounty writeups** — exact commands with proof
-- **Medium/blog posts** — professional terminal screenshots
-- **Client deliverables** — evidence appendix
-- **Twitter/X** — share wins with real screenshots
-- **Team knowledge** — searchable command history per engagement
 
 ---
 
 ## Roadmap
 
-- [ ] Per-command output capture (store what each command printed)
-- [ ] `shellcast replay` — replay session in terminal
-- [ ] `shellcast proof --copy` — copy screenshot to clipboard
-- [ ] Auto-chapters (detect recon → exploit → post-ex phases)
-- [ ] Zsh/Fish shell support
-- [ ] Encrypted session export for team sharing
+- [ ] Per-command exit code detection
+- [ ] Arrow key / escape sequence filtering in input
+- [ ] Zsh/Fish support
+- [ ] ANSI color rendering in PNG proofs
+- [ ] `shellcast replay` — terminal playback
+- [ ] Encrypted session export
 
 ---
 
