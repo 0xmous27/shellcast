@@ -159,6 +159,12 @@ func (r *Recorder) saveCmd(input, rawOutput string, start time.Time) {
 	cleanOutput := parser.Clean(rawOutput)
 	duration := time.Since(start).Milliseconds()
 
+	// Clean input — remove terminal response sequences that leak through
+	input = parser.CleanInput(input)
+	if input == "" {
+		return
+	}
+
 	// Handle #mark
 	if isMark, tag := highlight.IsMark(input); isMark {
 		if r.lastCmdID > 0 {

@@ -2,27 +2,12 @@ package render
 
 import (
 	"fmt"
-	"image"
-	"image/color"
-	"image/png"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"golang.org/x/image/font"
-	"golang.org/x/image/font/basicfont"
-	"golang.org/x/image/math/fixed"
 )
 
-var (
-	bgColor    = color.RGBA{30, 30, 30, 255}
-	fgColor    = color.RGBA{204, 204, 204, 255}
-	promptColor = color.RGBA{80, 250, 123, 255}
-	dimColor   = color.RGBA{100, 100, 100, 255}
-	headerBg   = color.RGBA{40, 40, 40, 255}
-)
-
-// ProofDir returns the proof output directory
 func ProofDir() string {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, "shellcast", "proofs")
@@ -30,115 +15,56 @@ func ProofDir() string {
 	return dir
 }
 
-// GenerateProof renders a command + output as a terminal-style PNG
-func GenerateProof(filename, input, cleanOutput string) error {
-	// Build lines
-	var lines []pngLine
-	lines = append(lines, pngLine{"$ " + input, promptColor})
-	for _, l := range strings.Split(cleanOutput, "\n") {
-		if len(l) > 120 {
-			l = l[:117] + "..."
-		}
-		lines = append(lines, pngLine{l, fgColor})
-	}
-
-	// Dimensions
-	charW := 7  // basicfont width
-	lineH := 18
-	padX := 24
-	padY := 20
-	headerH := 36
-
-	maxW := 0
-	for _, l := range lines {
-		w := len(l.text) * charW
-		if w > maxW {
-			maxW = w
-		}
-	}
-	imgW := maxW + padX*2
-	if imgW < 600 {
-		imgW = 600
-	}
-	if imgW > 1200 {
-		imgW = 1200
-	}
-	imgH := headerH + len(lines)*lineH + padY*2
-
-	img := image.NewRGBA(image.Rect(0, 0, imgW, imgH))
-
-	// Fill background
-	fillRect(img, 0, 0, imgW, imgH, bgColor)
-
-	// Header bar (window chrome)
-	fillRect(img, 0, 0, imgW, headerH, headerBg)
-	// Dots
-	drawCircle(img, 18, headerH/2, 6, color.RGBA{255, 95, 86, 255})
-	drawCircle(img, 38, headerH/2, 6, color.RGBA{255, 189, 46, 255})
-	drawCircle(img, 58, headerH/2, 6, color.RGBA{39, 201, 63, 255})
-	// Title
-	drawText(img, imgW/2-30, headerH/2+4, "shellcast", dimColor)
-
-	// Draw lines
-	face := basicfont.Face7x13
-	y := headerH + padY + 13
-	for _, l := range lines {
-		drawTextFace(img, padX, y, l.text, l.clr, face)
-		y += lineH
-	}
-
-	f, err := os.Create(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return png.Encode(f, img)
-}
-
-type pngLine struct {
-	text string
-	clr  color.RGBA
-}
-
-func fillRect(img *image.RGBA, x, y, w, h int, c color.RGBA) {
-	for py := y; py < y+h; py++ {
-		for px := x; px < x+w; px++ {
-			img.Set(px, py, c)
-		}
-	}
-}
-
-func drawCircle(img *image.RGBA, cx, cy, r int, c color.RGBA) {
-	for y := -r; y <= r; y++ {
-		for x := -r; x <= r; x++ {
-			if x*x+y*y <= r*r {
-				img.Set(cx+x, cy+y, c)
-			}
-		}
-	}
-}
-
-func drawText(img *image.RGBA, x, y int, text string, c color.RGBA) {
-	drawTextFace(img, x, y, text, c, basicfont.Face7x13)
-}
-
-func drawTextFace(img *image.RGBA, x, y int, text string, c color.RGBA, face font.Face) {
-	d := &font.Drawer{
-		Dst:  img,
-		Src:  image.NewUniform(c),
-		Face: face,
-		Dot:  fixed.P(x, y),
-	}
-	d.DrawString(text)
-}
-
-// GenerateProofFile is a convenience wrapper
-func GenerateProofFile(cmdID int64, input, cleanOutput string) (string, error) {
+// GenerateProofFile renders command + clean output as terminal-styled PNG.
+func GenerateProofFile(cmdID int64, input, outputRaw, outputClean string) (string, error) {
 	dir := ProofDir()
-	filename := filepath.Join(dir, fmt.Sprintf("proof_%d.png", cmdID))
-	err := GenerateProof(filename, input, cleanOutput)
-	if err != nil {
-		return "", err
+	htmlFile := filepath.Join(dir, fmt.Sprintf("proof_%d.html", cmdID))
+	pngFile := filepath.Join(dir, fmt.Sprintf("proof_%d.png", cmdID))
+
+	body := fmt.Sprintf(`<span style="color:#50fa7b;font-weight:bold">$ %s</span>
+%s`, escHTML(input), escHTML(outputClean))
+
+	fullHTML := wrapTerminalHTML(body)
+	os.WriteFile(htmlFile, []byte(fullHTML), 0644)
+
+	// Convert HTML → PNG using headless Chromium
+	if err := htmlToPNG(htmlFile, pngFile); err != nil {
+		// Keep HTML as fallback
+		return htmlFile, nil
 	}
-	return filename, nil
+	os.Remove(htmlFile)
+	return pngFile, nil
+}
+
+func htmlToPNG(htmlFile, pngFile string) error {
+	abs, _ := filepath.Abs(htmlFile)
+	browsers := []string{"chromium", "google-chrome", "chromium-browser"}
+	for _, b := range browsers {
+		if path, _ := exec.LookPath(b); path != "" {
+			return exec.Command(path, "--headless", "--no-sandbox",
+				"--screenshot="+pngFile, "--window-size=900,600",
+				"file://"+abs).Run()
+		}
+	}
+	return fmt.Errorf("no browser found for PNG conversion")
+}
+
+func wrapTerminalHTML(body string) string {
+	return fmt.Sprintf(`<!DOCTYPE html><html><head><style>
+body { background:#0d1117; color:#c9d1d9; font-family:'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace; font-size:14px; line-height:1.5; margin:0; padding:0; }
+.window { background:#161b22; border-radius:10px; margin:16px; overflow:hidden; border:1px solid #30363d; box-shadow:0 8px 40px rgba(0,0,0,0.5); }
+.titlebar { background:#21262d; padding:10px 16px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #30363d; }
+.dot { width:12px; height:12px; border-radius:50%%; display:inline-block; }
+.red { background:#ff5f56; } .yellow { background:#ffbd2e; } .green { background:#27c93f; }
+.content { padding:16px 20px; white-space:pre-wrap; word-wrap:break-word; }
+</style></head><body><div class="window"><div class="titlebar">
+<span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
+</div><div class="content">%s</div></div></body></html>`, body)
+}
+
+func escHTML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
 }

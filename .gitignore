@@ -4,6 +4,9 @@ shellcast
 # DB
 *.db
 
+# Generated proofs
+proofs/
+
 # Build
 dist/
 

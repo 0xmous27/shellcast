@@ -171,7 +171,7 @@ func doProof() {
 	cmds, _ := storage.GetCommands(db, latestSessionID(db))
 	for _, c := range cmds {
 		if c.ID == id {
-			path, err := render.GenerateProofFile(c.ID, c.Input, c.OutputClean)
+			path, err := render.GenerateProofFile(c.ID, c.Input, c.OutputRaw, c.OutputClean)
 			if err != nil {
 				fatal("render: %v", err)
 			}
