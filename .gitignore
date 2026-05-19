@@ -4,8 +4,9 @@ shellcast
 # DB
 *.db
 
-# Generated proofs
-proofs/
+# Generated screenshots
+*.tmp.html
+shellcast_proof_*.png
 
 # Build
 dist/
@@ -16,3 +17,7 @@ dist/
 # IDE
 .idea/
 .vscode/
+
+# Spec (local only)
+SPEC.md
+proofs/

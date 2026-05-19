@@ -2,59 +2,146 @@
 
 **Terminal session evidence recorder for pentesters.**
 
-Record your terminal sessions, reconstruct clean command history, and generate professional report-ready PNG screenshots — all from a single binary.
+Record terminal sessions, search command history, and generate report-ready PNG screenshots — single binary, zero config.
 
-> "Never forget to screenshot again."
+> *"Never forget to screenshot again."*
 
 ---
 
-## Example Output
+## Screenshots
 
-**`shellcast proof 1`** — `whoami`:
+`shellcast shot 1` — whoami:
 
 ![whoami](examples/example_whoami.png)
 
-**`shellcast proof 2`** — `ls -la /etc/ | head -10`:
+`shellcast shot 2` — ls -la:
 
 ![ls](examples/example_ls.png)
 
-**`shellcast proof 4`** — `ps aux | head -15`:
+`shellcast shot 4` — ps aux:
 
 ![ps](examples/example_ps.png)
 
-**`shellcast proof 5`** — `cat /nonexistent` (error):
+`shellcast shot 5` — error output:
 
 ![error](examples/example_error.png)
 
 ---
 
-## Installation
+## Install
 
 ```bash
 go install -v github.com/0xmous27/shellcast/cmd@latest
 ```
 
-That's it. Single command, single binary.
-
-### Dependencies
-
-- **Chromium** (for PNG proof generation):
-
+**Dependency** (for PNG generation):
 ```bash
-# Debian/Ubuntu/Kali
-sudo apt install chromium
-
-# Arch
-sudo pacman -S chromium
+sudo apt install chromium    # Debian/Kali/Ubuntu
 ```
 
-### Verify
+---
+
+## Quick Start
 
 ```bash
-shellcast version
+# Record
+shellcast start engagement-1
+
+# Hack normally...
+nmap -p- 10.10.10.5
+sqlmap -u "http://target/page?id=1" --os-shell
+#mark shell-access
+whoami
+#mark root
+exit
+
+# Review
+shellcast show
+
+# Generate evidence
+shellcast shot 3
+shellcast shot 4 -o root_proof.png
+shellcast export > report.md
 ```
 
-### Build from source (alternative)
+---
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `shellcast start <name>` | Start recording |
+| `shellcast show [session-id]` | Command timeline |
+| `shellcast highlights` | Auto-flagged security commands |
+| `shellcast marks` | Bookmarked commands |
+| `shellcast search <query>` | Search commands + output |
+| `shellcast shot <id\|range>` | Generate PNG screenshot |
+| `shellcast shot 3 -o file.png` | Custom output filename |
+| `shellcast export` | Markdown report |
+| `shellcast sessions` | List all sessions |
+| `shellcast mark <id> [tag]` | Retroactive bookmark |
+| `shellcast delete <session-id>` | Delete a session |
+| `shellcast version` | Version |
+
+**During session:**
+```bash
+#mark <tag>    # bookmarks the previous command (silent, no output)
+```
+
+---
+
+## How It Works
+
+1. `shellcast start` spawns your shell in a PTY — fully transparent, no lag
+2. Keystrokes are captured to reconstruct commands
+3. Output is stored raw + cleaned (ANSI stripped)
+4. `shellcast shot` renders clean output as terminal-styled PNG via headless Chromium
+5. Everything persists in local SQLite
+
+**No shell modification.** No hooks, no aliases, no `.bashrc` changes.
+
+---
+
+## PNG Screenshots
+
+- Dark background (#0d1117)
+- Monospace font (JetBrains Mono / Fira Code)
+- Green `$ command` prompt
+- 2x retina resolution
+- Tight-cropped to content — no extra space
+- Saved to current directory
+
+---
+
+## Auto-Highlighting
+
+Flags commands containing:
+
+`whoami` · `root` · `password` · `ssh` · `sqlmap` · `nuclei` · `linpeas` · `sudo` · `nmap` · `hashcat` · `hydra` · `meterpreter` · `dump` · `cred` · `bloodhound` · `mimikatz`
+
+Ignores: `ls` · `cd` · `pwd` · `clear` · `history`
+
+---
+
+## Storage
+
+```
+~/.shellcast/shellcast.db    # SQLite — local only, no cloud
+```
+
+---
+
+## Use Cases
+
+- OSCP/CPTS exam reports
+- Bug bounty proof of exploitation
+- Red team engagement evidence
+- CTF writeup screenshots
+- Blog/Medium terminal screenshots
+
+---
+
+## Build from Source
 
 ```bash
 git clone https://github.com/0xmous27/shellcast.git
@@ -65,225 +152,6 @@ sudo mv shellcast /usr/local/bin/
 
 ---
 
-## Quick Start
-
-```bash
-# 1. Start recording
-shellcast start my-engagement
-
-# 2. Do your thing (shell works 100% normally)
-nmap -p- 10.10.10.5
-gobuster dir -u http://10.10.10.5 -w /usr/share/wordlists/common.txt
-sqlmap -u "http://10.10.10.5/page?id=1" --os-shell
-#mark shell-access
-whoami
-#mark root-proof
-exit
-
-# 3. Review
-shellcast show
-
-# 4. Generate evidence
-shellcast proof 3-6
-
-# 5. Export report
-shellcast export > report.md
-```
-
----
-
-## Usage
-
-### Record a Session
-
-```bash
-shellcast start <engagement-name>
-```
-
-Your shell works **100% normally** — colors, prompt, aliases, everything. ShellCast records silently via PTY. No shell modification, no hooks, no lag.
-
-Type `exit` to stop recording.
-
-### Bookmark Important Moments
-
-During your session, type:
-
-```bash
-#mark <tag>
-```
-
-This bookmarks the **previous** command. It doesn't execute in the shell — it's intercepted by ShellCast.
-
-Examples:
-```bash
-#mark initial-access
-#mark privesc
-#mark domain-admin
-#mark creds-found
-```
-
-### Review Commands
-
-```bash
-shellcast show                  # full command timeline
-shellcast highlights            # auto-highlighted security commands
-shellcast marks                 # bookmarked commands only
-shellcast search "password"     # search input + output
-shellcast sessions              # list all recorded sessions
-```
-
-### Generate PNG Proof Screenshots
-
-```bash
-shellcast proof 5               # single command
-shellcast proof 3-8             # range of commands
-```
-
-Output: `~/shellcast/proofs/proof_<id>.png`
-
-Each PNG contains:
-- Green `$ command` prompt
-- White command output
-- Dark background
-- Monospace font (JetBrains Mono / Fira Code)
-- Tight-cropped to content — no extra space
-- 2x retina resolution
-
-### Export Markdown Report
-
-```bash
-shellcast export > report.md
-```
-
-Generates a structured markdown report with all highlighted/bookmarked commands, ready for GitHub, Notion, or any markdown editor.
-
-### Retroactive Bookmarking
-
-Forgot to `#mark` during the session? Do it after:
-
-```bash
-shellcast mark 12 "privesc"
-shellcast mark 15 "creds-found"
-```
-
----
-
-## Auto-Highlighting
-
-ShellCast automatically flags commands containing security-relevant keywords:
-
-`whoami` · `root` · `password` · `ssh` · `sqlmap` · `nuclei` · `linpeas` · `sudo` · `nmap` · `hashcat` · `hydra` · `meterpreter` · `dump` · `cred` · `privesc` · `bloodhound` · `mimikatz`
-
-Also highlights commands with significant output (>5 lines).
-
-Ignores noise: `ls` · `cd` · `pwd` · `clear` · `history`
-
----
-
-## Multiple Terminals
-
-Each terminal gets its own session. Just start ShellCast in each:
-
-```bash
-# Tab 1
-shellcast start recon
-
-# Tab 2
-shellcast start exploit
-
-# Tab 3
-shellcast start privesc
-```
-
-Review all sessions:
-```bash
-shellcast sessions
-```
-
----
-
-## Storage
-
-```
-~/.shellcast/
-└── shellcast.db            # SQLite — commands, output, timestamps
-
-~/shellcast/
-└── proofs/                 # Generated PNG screenshots
-    ├── proof_1.png
-    ├── proof_2.png
-    └── ...
-```
-
-Everything local. No cloud. No telemetry. No network calls.
-
----
-
-## How It Works
-
-1. `shellcast start` spawns your shell inside a PTY (transparent wrapper)
-2. Keystrokes are captured to reconstruct commands (Enter, backspace, Ctrl+C)
-3. PTY output is stored — both raw (with ANSI) and cleaned (readable text)
-4. `#mark` commands are intercepted and tag the previous command
-5. `shellcast proof` renders stored output as terminal-styled PNG via headless Chromium
-6. Everything persists in SQLite for later search/export
-
-**No shell modification.** No `.bashrc` changes, no aliases, no `PROMPT_COMMAND` injection. Pure PTY passthrough.
-
----
-
-## Use Cases
-
-| Who | Why |
-|-----|-----|
-| **OSCP/CPTS students** | Evidence screenshots for exam reports |
-| **Bug bounty hunters** | Proof of exploitation for submissions |
-| **Red teamers** | Client engagement evidence |
-| **CTF players** | Writeup screenshots |
-| **Pentesters** | Report appendix generation |
-| **Security researchers** | Blog post terminal screenshots |
-
----
-
-## Command Reference
-
-| Command | Description |
-|---------|-------------|
-| `shellcast start <name>` | Start recording a session |
-| `shellcast show` | Show command timeline |
-| `shellcast highlights` | Show auto-highlighted commands |
-| `shellcast marks` | Show bookmarked commands |
-| `shellcast search <query>` | Search commands and output |
-| `shellcast proof <id\|range>` | Generate PNG screenshot(s) |
-| `shellcast export` | Export markdown report |
-| `shellcast sessions` | List all sessions |
-| `shellcast mark <id> [tag]` | Mark a command retroactively |
-| `shellcast version` | Show version |
-
----
-
-## Roadmap
-
-- [ ] Per-command exit code tracking
-- [ ] Arrow key / escape sequence filtering improvements
-- [ ] Zsh and Fish shell support
-- [ ] ANSI color rendering in PNG proofs
-- [ ] `shellcast replay` — terminal session playback
-- [ ] Proof themes (dark, light, Dracula, Nord)
-- [ ] Copy proof to clipboard
-- [ ] PDF report generation
-- [ ] Encrypted session export for team sharing
-
----
-
 ## License
 
-MIT
-
----
-
-## Author
-
-[@0xmous27](https://github.com/0xmous27)
-
-> *"The best evidence is the evidence you didn't have to remember to collect."*
+MIT — [@0xmous27](https://github.com/0xmous27)
