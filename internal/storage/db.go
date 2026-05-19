@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"github.com/0xmous27/shellcast/pkg/models"
 )
 
@@ -14,7 +14,7 @@ func Open() (*sql.DB, error) {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".shellcast")
 	os.MkdirAll(dir, 0755)
-	db, err := sql.Open("sqlite3", filepath.Join(dir, "shellcast.db"))
+	db, err := sql.Open("sqlite", filepath.Join(dir, "shellcast.db"))
 	if err != nil {
 		return nil, err
 	}

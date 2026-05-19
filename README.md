@@ -30,36 +30,21 @@ Record your terminal sessions, reconstruct clean command history, and generate p
 
 ## Installation
 
-### Requirements
-
-- **Go 1.21+** (to build)
-- **gcc** (for SQLite CGo binding)
-- **Chromium** (for PNG proof generation)
-- **socat** (optional, for future shell integration features)
-
-### Build
-
 ```bash
-git clone https://github.com/0xmous27/shellcast.git
-cd shellcast
-go build -o shellcast ./cmd/
+go install -v github.com/0xmous27/shellcast/cmd@latest
 ```
 
-### Install system-wide
+That's it. Single command, single binary.
+
+### Dependencies
+
+- **Chromium** (for PNG proof generation):
 
 ```bash
-sudo mv shellcast /usr/local/bin/
-```
-
-### Install dependencies
-
-**Debian/Ubuntu/Kali:**
-```bash
+# Debian/Ubuntu/Kali
 sudo apt install chromium
-```
 
-**Arch:**
-```bash
+# Arch
 sudo pacman -S chromium
 ```
 
@@ -67,7 +52,15 @@ sudo pacman -S chromium
 
 ```bash
 shellcast version
-# shellcast v0.1.0
+```
+
+### Build from source (alternative)
+
+```bash
+git clone https://github.com/0xmous27/shellcast.git
+cd shellcast
+go build -o shellcast ./cmd/
+sudo mv shellcast /usr/local/bin/
 ```
 
 ---
