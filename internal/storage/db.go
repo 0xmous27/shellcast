@@ -70,6 +70,11 @@ func MarkCommand(db *sql.DB, id int64, tag string) {
 	db.Exec("UPDATE commands SET marked = 1, tag = ? WHERE id = ?", tag, id)
 }
 
+func DeleteSession(db *sql.DB, id int64) {
+	db.Exec("DELETE FROM commands WHERE session_id = ?", id)
+	db.Exec("DELETE FROM sessions WHERE id = ?", id)
+}
+
 func GetLatestSession(db *sql.DB) (*models.Session, error) {
 	s := &models.Session{}
 	var end sql.NullTime

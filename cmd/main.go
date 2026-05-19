@@ -20,7 +20,7 @@ const usage = `shellcast — terminal session evidence recorder
 
 USAGE:
   shellcast start <name>        Start recording a session
-  shellcast show                Show command timeline
+  shellcast show [session-id]   Show command timeline
   shellcast highlights          Show highlighted commands
   shellcast marks               Show bookmarked commands
   shellcast search <query>      Search commands and output
@@ -29,6 +29,7 @@ USAGE:
   shellcast export              Export markdown report
   shellcast sessions            List all sessions
   shellcast mark <id> [tag]     Mark a command retroactively
+  shellcast delete <session-id> Delete a session
   shellcast version             Show version
 
 DURING SESSION:
@@ -59,6 +60,8 @@ func main() {
 		doSessions()
 	case "mark":
 		doMark()
+	case "delete":
+		doDelete()
 	case "version", "-v":
 		fmt.Printf("shellcast v%s\n", version)
 	default:
@@ -119,7 +122,14 @@ func doStart() {
 func doShow() {
 	db, _ := storage.Open()
 	defer db.Close()
-	cmds, _ := storage.GetCommands(db, latestSessionID(db))
+	var sid int64
+	if len(os.Args) > 2 {
+		sid, _ = strconv.ParseInt(os.Args[2], 10, 64)
+	}
+	if sid == 0 {
+		sid = latestSessionID(db)
+	}
+	cmds, _ := storage.GetCommands(db, sid)
 	printCmds(cmds)
 }
 
@@ -261,6 +271,20 @@ func doMark() {
 	defer db.Close()
 	storage.MarkCommand(db, id, tag)
 	fmt.Printf("✓ Command #%d marked: \"%s\"\n", id, tag)
+}
+
+func doDelete() {
+	if len(os.Args) < 3 {
+		fatal("usage: shellcast delete <session-id>")
+	}
+	id, _ := strconv.ParseInt(os.Args[2], 10, 64)
+	if id == 0 {
+		fatal("invalid session id")
+	}
+	db, _ := storage.Open()
+	defer db.Close()
+	storage.DeleteSession(db, id)
+	fmt.Printf("✓ Session #%d deleted\n", id)
 }
 
 func printCmds(cmds []models.Command) {
