@@ -6,6 +6,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/0xmous27/shellcast/internal/parser"
+)
+
+const (
+	fontSize = 15
+	lineH    = 24
+	padX     = 24
+	padY     = 18
 )
 
 func ProofDir() string {
@@ -15,51 +24,91 @@ func ProofDir() string {
 	return dir
 }
 
-// GenerateProofFile renders command + clean output as terminal-styled PNG.
+// GenerateProofFile renders command + output as a beautiful tight-cropped PNG.
 func GenerateProofFile(cmdID int64, input, outputRaw, outputClean string) (string, error) {
 	dir := ProofDir()
-	htmlFile := filepath.Join(dir, fmt.Sprintf("proof_%d.html", cmdID))
+	htmlFile := filepath.Join(dir, fmt.Sprintf(".proof_%d.html", cmdID))
 	pngFile := filepath.Join(dir, fmt.Sprintf("proof_%d.png", cmdID))
 
-	body := fmt.Sprintf(`<span style="color:#50fa7b;font-weight:bold">$ %s</span>
-%s`, escHTML(input), escHTML(outputClean))
+	// Clean: remove echoed command, trailing blanks
+	cleanedOutput := parser.CleanForProof(input, outputClean)
 
-	fullHTML := wrapTerminalHTML(body)
-	os.WriteFile(htmlFile, []byte(fullHTML), 0644)
-
-	// Convert HTML → PNG using headless Chromium
-	if err := htmlToPNG(htmlFile, pngFile); err != nil {
-		// Keep HTML as fallback
-		return htmlFile, nil
+	// Build content lines
+	var lines []string
+	lines = append(lines, fmt.Sprintf(`<span class="p">$ %s</span>`, escHTML(input)))
+	if cleanedOutput != "" {
+		for _, l := range strings.Split(cleanedOutput, "\n") {
+			lines = append(lines, escHTML(l))
+		}
 	}
+
+	body := strings.Join(lines, "\n")
+
+	// Exact dimensions from actual content
+	maxLen := 0
+	for _, l := range lines {
+		// Strip HTML tags for length calc
+		plain := strings.ReplaceAll(l, `<span class="p">`, "")
+		plain = strings.ReplaceAll(plain, `</span>`, "")
+		plain = strings.ReplaceAll(plain, "&amp;", "&")
+		plain = strings.ReplaceAll(plain, "&lt;", "<")
+		plain = strings.ReplaceAll(plain, "&gt;", ">")
+		if len(plain) > maxLen {
+			maxLen = len(plain)
+		}
+	}
+	width := padX*2 + int(float64(maxLen)*9.0) + 10
+	if width < 400 {
+		width = 400
+	}
+	lineCount := len(lines)
+	height := padY*2 + (lineCount+3)*lineH
+
+	html := fmt.Sprintf(`<!DOCTYPE html><html><head><style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:#0d1117;overflow:hidden;width:%dpx;height:%dpx}
+pre{
+  font-family:'JetBrains Mono','Fira Code','Cascadia Code','SF Mono','Consolas',monospace;
+  font-size:15px;
+  line-height:24px;
+  color:#c9d1d9;
+  padding:18px 24px;
+  margin:0;
+  white-space:pre;
+  -webkit-font-smoothing:antialiased;
+}
+.p{color:#50fa7b;font-weight:bold}
+</style></head><body><pre>%s</pre></body></html>`,
+		width, height, body)
+
+	os.WriteFile(htmlFile, []byte(html), 0644)
+
+	// Render with Chromium — exact size, no scrollbars
+	err := chromiumScreenshot(htmlFile, pngFile, width, height)
 	os.Remove(htmlFile)
+	if err != nil {
+		return "", err
+	}
 	return pngFile, nil
 }
 
-func htmlToPNG(htmlFile, pngFile string) error {
+func chromiumScreenshot(htmlFile, pngFile string, w, h int) error {
 	abs, _ := filepath.Abs(htmlFile)
+	size := fmt.Sprintf("%d,%d", w, h)
 	browsers := []string{"chromium", "google-chrome", "chromium-browser"}
 	for _, b := range browsers {
 		if path, _ := exec.LookPath(b); path != "" {
-			return exec.Command(path, "--headless", "--no-sandbox",
-				"--screenshot="+pngFile, "--window-size=900,600",
-				"file://"+abs).Run()
+			return exec.Command(path,
+				"--headless", "--no-sandbox", "--disable-gpu",
+				"--hide-scrollbars",
+				"--force-device-scale-factor=2",
+				"--screenshot="+pngFile,
+				"--window-size="+size,
+				"file://"+abs,
+			).Run()
 		}
 	}
-	return fmt.Errorf("no browser found for PNG conversion")
-}
-
-func wrapTerminalHTML(body string) string {
-	return fmt.Sprintf(`<!DOCTYPE html><html><head><style>
-body { background:#0d1117; color:#c9d1d9; font-family:'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace; font-size:14px; line-height:1.5; margin:0; padding:0; }
-.window { background:#161b22; border-radius:10px; margin:16px; overflow:hidden; border:1px solid #30363d; box-shadow:0 8px 40px rgba(0,0,0,0.5); }
-.titlebar { background:#21262d; padding:10px 16px; display:flex; align-items:center; gap:8px; border-bottom:1px solid #30363d; }
-.dot { width:12px; height:12px; border-radius:50%%; display:inline-block; }
-.red { background:#ff5f56; } .yellow { background:#ffbd2e; } .green { background:#27c93f; }
-.content { padding:16px 20px; white-space:pre-wrap; word-wrap:break-word; }
-</style></head><body><div class="window"><div class="titlebar">
-<span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span>
-</div><div class="content">%s</div></div></body></html>`, body)
+	return fmt.Errorf("chromium not found")
 }
 
 func escHTML(s string) string {

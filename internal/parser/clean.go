@@ -43,6 +43,12 @@ func Clean(raw string) string {
 			out = append(out, l)
 		}
 	}
+
+	// Remove trailing empty lines
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
@@ -51,8 +57,30 @@ func CleanInput(s string) string {
 	// Remove ]digits;...\ sequences (terminal query responses)
 	reResp := regexp.MustCompile(`\][\d]+;[^\\]*\\`)
 	s = reResp.ReplaceAllString(s, "")
-	// Remove [digits;...letter sequences (CSI responses without ESC)
-	reBracket := regexp.MustCompile(`\[[\d;?]*[A-Za-z]`)
+	// Remove [digits;...letter/~ sequences (CSI + bracketed paste)
+	reBracket := regexp.MustCompile(`\[[\d;?]*[A-Za-z~]`)
 	s = reBracket.ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
+}
+
+// CleanForProof prepares output for PNG proof — removes echoed command from start
+func CleanForProof(input, outputClean string) string {
+	lines := strings.Split(outputClean, "\n")
+	var out []string
+	for _, l := range lines {
+		// Skip line if it's just the echoed command
+		if strings.TrimSpace(l) == strings.TrimSpace(input) {
+			continue
+		}
+		out = append(out, l)
+	}
+	// Remove trailing empty lines
+	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
+		out = out[:len(out)-1]
+	}
+	// Remove leading empty lines
+	for len(out) > 0 && strings.TrimSpace(out[0]) == "" {
+		out = out[1:]
+	}
+	return strings.Join(out, "\n")
 }

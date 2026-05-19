@@ -160,15 +160,46 @@ func doSearch() {
 
 func doProof() {
 	if len(os.Args) < 3 {
-		fatal("usage: shellcast proof <cmd-id>")
-	}
-	id, err := strconv.ParseInt(os.Args[2], 10, 64)
-	if err != nil {
-		fatal("invalid id")
+		fatal("usage: shellcast proof <cmd-id|from-to>")
 	}
 	db, _ := storage.Open()
 	defer db.Close()
-	cmds, _ := storage.GetCommands(db, latestSessionID(db))
+	sid := latestSessionID(db)
+	cmds, _ := storage.GetCommands(db, sid)
+
+	arg := os.Args[2]
+
+	// Range: shellcast proof 2-5
+	if strings.Contains(arg, "-") {
+		parts := strings.Split(arg, "-")
+		from, _ := strconv.ParseInt(parts[0], 10, 64)
+		to, _ := strconv.ParseInt(parts[1], 10, 64)
+		if from == 0 || to == 0 || from > to {
+			fatal("invalid range: %s", arg)
+		}
+		count := 0
+		for _, c := range cmds {
+			if c.ID >= from && c.ID <= to {
+				path, err := render.GenerateProofFile(c.ID, c.Input, c.OutputRaw, c.OutputClean)
+				if err != nil {
+					fatal("render: %v", err)
+				}
+				fmt.Printf("  ✓ #%d → %s\n", c.ID, path)
+				count++
+			}
+		}
+		if count == 0 {
+			fatal("no commands in range %s", arg)
+		}
+		fmt.Printf("\033[32m✓ %d proofs generated\033[0m\n", count)
+		return
+	}
+
+	// Single: shellcast proof 3
+	id, err := strconv.ParseInt(arg, 10, 64)
+	if err != nil {
+		fatal("invalid id: %s", arg)
+	}
 	for _, c := range cmds {
 		if c.ID == id {
 			path, err := render.GenerateProofFile(c.ID, c.Input, c.OutputRaw, c.OutputClean)
