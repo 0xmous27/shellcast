@@ -17,18 +17,18 @@ const (
 	padY     = 18
 )
 
-func ProofDir() string {
-	home, _ := os.UserHomeDir()
-	dir := filepath.Join(home, "shellcast", "proofs")
-	os.MkdirAll(dir, 0755)
-	return dir
-}
+// GenerateProof renders command + output as a tight-cropped PNG.
+// If outName is empty, saves to current directory as shellcast_proof_<id>.png
+func GenerateProof(cmdID int64, input, outputRaw, outputClean, outName string) (string, error) {
+	var pngFile string
+	if outName != "" {
+		pngFile = outName
+	} else {
+		pngFile = fmt.Sprintf("shellcast_proof_%d.png", cmdID)
+	}
 
-// GenerateProofFile renders command + output as a beautiful tight-cropped PNG.
-func GenerateProofFile(cmdID int64, input, outputRaw, outputClean string) (string, error) {
-	dir := ProofDir()
-	htmlFile := filepath.Join(dir, fmt.Sprintf(".proof_%d.html", cmdID))
-	pngFile := filepath.Join(dir, fmt.Sprintf("proof_%d.png", cmdID))
+	// Temp HTML
+	htmlFile := pngFile + ".tmp.html"
 
 	// Clean: remove echoed command, trailing blanks
 	cleanedOutput := parser.CleanForProof(input, outputClean)

@@ -160,17 +160,25 @@ func doSearch() {
 
 func doProof() {
 	if len(os.Args) < 3 {
-		fatal("usage: shellcast proof <cmd-id|from-to>")
+		fatal("usage: shellcast proof <cmd-id|from-to> [-o filename.png]")
 	}
 	db, _ := storage.Open()
 	defer db.Close()
 	sid := latestSessionID(db)
 	cmds, _ := storage.GetCommands(db, sid)
 
+	// Parse -o flag
 	arg := os.Args[2]
+	outName := ""
+	for i, a := range os.Args {
+		if a == "-o" && i+1 < len(os.Args) {
+			outName = os.Args[i+1]
+			break
+		}
+	}
 
 	// Range: shellcast proof 2-5
-	if strings.Contains(arg, "-") {
+	if strings.Contains(arg, "-") && !strings.HasPrefix(arg, "-") {
 		parts := strings.Split(arg, "-")
 		from, _ := strconv.ParseInt(parts[0], 10, 64)
 		to, _ := strconv.ParseInt(parts[1], 10, 64)
@@ -180,7 +188,7 @@ func doProof() {
 		count := 0
 		for _, c := range cmds {
 			if c.ID >= from && c.ID <= to {
-				path, err := render.GenerateProofFile(c.ID, c.Input, c.OutputRaw, c.OutputClean)
+				path, err := render.GenerateProof(c.ID, c.Input, c.OutputRaw, c.OutputClean, "")
 				if err != nil {
 					fatal("render: %v", err)
 				}
@@ -195,14 +203,14 @@ func doProof() {
 		return
 	}
 
-	// Single: shellcast proof 3
+	// Single: shellcast proof 3 [-o custom.png]
 	id, err := strconv.ParseInt(arg, 10, 64)
 	if err != nil {
 		fatal("invalid id: %s", arg)
 	}
 	for _, c := range cmds {
 		if c.ID == id {
-			path, err := render.GenerateProofFile(c.ID, c.Input, c.OutputRaw, c.OutputClean)
+			path, err := render.GenerateProof(c.ID, c.Input, c.OutputRaw, c.OutputClean, outName)
 			if err != nil {
 				fatal("render: %v", err)
 			}
