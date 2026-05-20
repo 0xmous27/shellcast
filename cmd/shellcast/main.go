@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -30,6 +31,9 @@ USAGE:
   shellcast sessions            List all sessions
   shellcast mark <id> [tag]     Mark a command retroactively
   shellcast delete <session-id> Delete a session
+  shellcast exclude add ">"     Exclude pattern from output
+  shellcast exclude list        Show exclude patterns
+  shellcast exclude clear       Remove all patterns
   shellcast version             Show version
 
 DURING SESSION:
@@ -62,6 +66,8 @@ func main() {
 		doMark()
 	case "delete":
 		doDelete()
+	case "exclude":
+		doExclude()
 	case "version", "-v":
 		fmt.Printf("shellcast v%s\n", version)
 	default:
@@ -315,5 +321,63 @@ func printCmds(cmds []models.Command) {
 			}
 		}
 		fmt.Println()
+	}
+}
+
+func doExclude() {
+	home, _ := os.UserHomeDir()
+	excludeFile := filepath.Join(home, ".shellcast", "exclude")
+
+	if len(os.Args) < 3 {
+		// Show current excludes
+		data, err := os.ReadFile(excludeFile)
+		if err != nil || len(data) == 0 {
+			fmt.Println("No exclude patterns set.")
+			fmt.Println("Usage: shellcast exclude add \">\"")
+			fmt.Println("       shellcast exclude add \"user@host\"")
+			fmt.Println("       shellcast exclude list")
+			fmt.Println("       shellcast exclude clear")
+			return
+		}
+		fmt.Println("Exclude patterns (~/.shellcast/exclude):")
+		fmt.Print(string(data))
+		return
+	}
+
+	switch os.Args[2] {
+	case "add":
+		if len(os.Args) < 4 {
+			fatal("usage: shellcast exclude add \"<pattern>\"")
+		}
+		pattern := strings.Join(os.Args[3:], " ")
+		os.MkdirAll(filepath.Dir(excludeFile), 0755)
+		f, err := os.OpenFile(excludeFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			fatal("error: %v", err)
+		}
+		f.WriteString(pattern + "\n")
+		f.Close()
+		fmt.Printf("✓ Added exclude pattern: %s\n", pattern)
+
+	case "list":
+		data, _ := os.ReadFile(excludeFile)
+		if len(data) == 0 {
+			fmt.Println("No exclude patterns.")
+			return
+		}
+		fmt.Print(string(data))
+
+	case "clear":
+		os.Remove(excludeFile)
+		fmt.Println("✓ All exclude patterns cleared.")
+
+	default:
+		// Treat as pattern directly: shellcast exclude ">"
+		pattern := strings.Join(os.Args[2:], " ")
+		os.MkdirAll(filepath.Dir(excludeFile), 0755)
+		f, _ := os.OpenFile(excludeFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		f.WriteString(pattern + "\n")
+		f.Close()
+		fmt.Printf("✓ Added exclude pattern: %s\n", pattern)
 	}
 }

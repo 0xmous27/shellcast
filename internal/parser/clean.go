@@ -21,6 +21,8 @@ func Clean(raw string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 
+	excludePatterns := LoadExcludePatterns()
+
 	lines := strings.Split(s, "\n")
 	var out []string
 	blanks := 0
@@ -35,6 +37,10 @@ func Clean(raw string) string {
 		}
 		// Skip common prompt patterns with >
 		if regexp.MustCompile(`^[a-zA-Z0-9@._~/-]*[>$#]\s*$`).MatchString(l) {
+			continue
+		}
+		// Skip user-defined exclude patterns
+		if ShouldExcludeLine(l, excludePatterns) {
 			continue
 		}
 		if l == "" {
