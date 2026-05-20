@@ -30,11 +30,30 @@ Record terminal sessions, search command history, and generate report-ready PNG 
 
 ## Install
 
+### If you have Go:
 ```bash
 go install github.com/0xmous27/shellcast/cmd/shellcast@latest
 ```
 
-**Requirements (Linux, for screenshots):**
+### If you don't have Go:
+```bash
+# Install Go
+wget https://go.dev/dl/go1.24.4.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.24.4.linux-amd64.tar.gz
+rm go1.24.4.linux-amd64.tar.gz
+
+# Add to PATH (add these to ~/.bashrc or ~/.zshrc to make permanent)
+export PATH=$PATH:/usr/local/go/bin
+export PATH=$PATH:~/go/bin
+
+# Install shellcast
+go install github.com/0xmous27/shellcast/cmd/shellcast@latest
+
+# Verify
+shellcast version
+```
+
+### Requirements (Linux, for screenshots):
 ```bash
 sudo apt install scrot xdotool
 ```
