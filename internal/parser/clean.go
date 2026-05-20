@@ -33,6 +33,10 @@ func Clean(raw string) string {
 		if strings.HasPrefix(l, "┌──(") {
 			continue
 		}
+		// Skip common prompt patterns with >
+		if regexp.MustCompile(`^[a-zA-Z0-9@._~/-]*[>$#]\s*$`).MatchString(l) {
+			continue
+		}
 		if l == "" {
 			blanks++
 			if blanks <= 1 {
