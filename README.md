@@ -100,12 +100,40 @@ shellcast export > report.md
 | `shellcast sessions` | List all sessions |
 | `shellcast mark <id> [tag]` | Retroactive bookmark |
 | `shellcast delete <session-id>` | Delete a session |
+| `shellcast exclude add ">"` | Exclude pattern from output |
+| `shellcast exclude list` | Show current exclude patterns |
+| `shellcast exclude clear` | Remove all exclude patterns |
 | `shellcast version` | Version |
 
 **During session:**
 ```bash
 #mark <tag>    # bookmarks the previous command (silent, no output)
 ```
+
+---
+
+## Exclude Patterns
+
+Some terminals add extra characters (like `>`) to output that you don't want in your screenshots or reports. Use `exclude` to filter them out:
+
+```bash
+# Add a pattern to exclude
+shellcast exclude add ">"
+
+# Exclude your prompt if it leaks into output
+shellcast exclude add "user@host"
+
+# See what's excluded
+shellcast exclude list
+
+# Clear all patterns
+shellcast exclude clear
+```
+
+Patterns are stored in `~/.shellcast/exclude` and apply to:
+- `shellcast show` (clean text output)
+- `shellcast shot` (PNG screenshots)
+- `shellcast export` (markdown reports)
 
 ---
 
