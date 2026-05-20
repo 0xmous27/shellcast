@@ -75,11 +75,16 @@ func CleanInput(s string) string {
 
 // CleanForProof prepares output for PNG proof — removes echoed command from start
 func CleanForProof(input, outputClean string) string {
+	excludePatterns := LoadExcludePatterns()
 	lines := strings.Split(outputClean, "\n")
 	var out []string
 	for _, l := range lines {
 		// Skip line if it's just the echoed command
 		if strings.TrimSpace(l) == strings.TrimSpace(input) {
+			continue
+		}
+		// Skip user-defined exclude patterns
+		if ShouldExcludeLine(l, excludePatterns) {
 			continue
 		}
 		out = append(out, l)
