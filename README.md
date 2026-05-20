@@ -31,12 +31,12 @@ Record terminal sessions, search command history, and generate report-ready PNG 
 ## Install
 
 ```bash
-go install -v github.com/0xmous27/shellcast/cmd@latest
+go install github.com/0xmous27/shellcast/cmd/shellcast@latest
 ```
 
-**Dependency** (for PNG generation):
+**Requirements (Linux, for screenshots):**
 ```bash
-sudo apt install chromium    # Debian/Kali/Ubuntu
+sudo apt install scrot xdotool
 ```
 
 ---
