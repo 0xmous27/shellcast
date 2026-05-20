@@ -53,9 +53,9 @@ go install github.com/0xmous27/shellcast/cmd/shellcast@latest
 shellcast version
 ```
 
-### Requirements (Linux, for screenshots):
+### Requirements (Linux, for PNG screenshots):
 ```bash
-sudo apt install scrot xdotool
+sudo apt install chromium    # or google-chrome / chromium-browser
 ```
 
 ---
@@ -165,7 +165,7 @@ Ignores: `ls` · `cd` · `pwd` · `clear` · `history`
 ```bash
 git clone https://github.com/0xmous27/shellcast.git
 cd shellcast
-go build -o shellcast ./cmd/
+go build -o shellcast ./cmd/shellcast/
 sudo mv shellcast /usr/local/bin/
 ```
 
