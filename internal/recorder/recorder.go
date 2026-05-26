@@ -66,6 +66,7 @@ func (r *Recorder) Run() error {
 	var inputLine []byte      // current line being typed
 	var outputBuf []byte      // output since last command
 	var pendingCmd string     // command waiting for output
+	var continuationBuf string // multi-line command buffer (backslash)
 	var cmdStart time.Time    // when pending command was submitted
 	promptReady := false      // have we seen at least one prompt cycle
 
@@ -90,6 +91,17 @@ func (r *Recorder) Run() error {
 					if cmd == "" {
 						mu.Unlock()
 						goto next
+					}
+
+					// Multi-line command (backslash continuation)
+					if strings.HasSuffix(cmd, "\\") {
+						continuationBuf += cmd[:len(cmd)-1]
+						mu.Unlock()
+						goto next
+					}
+					if continuationBuf != "" {
+						cmd = continuationBuf + cmd
+						continuationBuf = ""
 					}
 
 					// Save previous command now (we have its output)

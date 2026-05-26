@@ -20,6 +20,8 @@ func Clean(raw string) string {
 	s = reCtrl.ReplaceAllString(s, "")
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
+	// Remove arrow key escape remnants
+	s = regexp.MustCompile(`(OD|OA|OB|OC){3,}`).ReplaceAllString(s, "")
 
 	excludePatterns := LoadExcludePatterns()
 
@@ -70,6 +72,14 @@ func CleanInput(s string) string {
 	// Remove [digits;...letter/~ sequences (CSI + bracketed paste)
 	reBracket := regexp.MustCompile(`\[[\d;?]*[A-Za-z~]`)
 	s = reBracket.ReplaceAllString(s, "")
+	// Remove arrow key remnants (OA=up, OB=down, OC=right, OD=left)
+	reArrow := regexp.MustCompile(`(OD|OA|OB|OC){2,}`)
+	s = reArrow.ReplaceAllString(s, "")
+	// Remove single remaining OD/OA/OC/OB at start or end
+	s = regexp.MustCompile(`^(OD|OA|OB|OC)+`).ReplaceAllString(s, "")
+	s = regexp.MustCompile(`(OD|OA|OB|OC)+$`).ReplaceAllString(s, "")
+	// Remove repeated OD/OA/OC/OB patterns anywhere
+	s = regexp.MustCompile(`(OD|OA|OB|OC)+`).ReplaceAllString(s, "")
 	return strings.TrimSpace(s)
 }
 
