@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/0xmous27/shellcast/internal/parser"
@@ -33,9 +34,17 @@ func GenerateProof(cmdID int64, input, outputRaw, outputClean, outName string) (
 	// Clean: remove echoed command, trailing blanks
 	cleanedOutput := parser.CleanForProof(input, outputClean)
 
+	// Extract prompt path from raw output (e.g. ~/payloads)
+	promptPath := extractPromptPath(outputRaw)
+
 	// Build content lines
 	var lines []string
-	lines = append(lines, fmt.Sprintf(`<span class="p">$ %s</span>`, escHTML(input)))
+	// Show prompt with path: ~/payloads $  or just $ if no path found
+	if promptPath != "" {
+		lines = append(lines, fmt.Sprintf(`<span class="path">%s</span> <span class="p">$ %s</span>`, escHTML(promptPath), escHTML(input)))
+	} else {
+		lines = append(lines, fmt.Sprintf(`<span class="p">$ %s</span>`, escHTML(input)))
+	}
 	if cleanedOutput != "" {
 		for _, l := range strings.Split(cleanedOutput, "\n") {
 			lines = append(lines, escHTML(l))
@@ -78,6 +87,7 @@ pre{
   -webkit-font-smoothing:antialiased;
 }
 .p{color:#50fa7b;font-weight:bold}
+.path{color:#6272a4}
 </style></head><body><pre>%s</pre></body></html>`,
 		width, height, body)
 
@@ -116,4 +126,29 @@ func escHTML(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	return s
+}
+
+// extractPromptPath finds the working directory from the prompt in raw output.
+// Looks for patterns like: [~/payloads] or [/home/user/dir]
+func extractPromptPath(raw string) string {
+	// Strip ANSI first for easier matching
+	clean := regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`).ReplaceAllString(raw, "")
+	clean = regexp.MustCompile(`\x1b\][^\x07]*\x07`).ReplaceAllString(clean, "")
+
+	// Match [path] pattern from Kali/Zsh prompts: )-[~/something] or ]-[/home/...]
+	re := regexp.MustCompile(`\[([~/][^\]]*)\]`)
+	matches := re.FindAllStringSubmatch(clean, -1)
+	if len(matches) > 0 {
+		// Return the last match (most recent prompt)
+		return matches[len(matches)-1][1]
+	}
+
+	// Match colon-style prompts: user@host:~/path$
+	re2 := regexp.MustCompile(`:([~/][^\$#\s]*)[\$#]`)
+	matches2 := re2.FindAllStringSubmatch(clean, -1)
+	if len(matches2) > 0 {
+		return matches2[len(matches2)-1][1]
+	}
+
+	return ""
 }
