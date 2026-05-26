@@ -157,17 +157,18 @@ func extractPromptPath(raw string) string {
 }
 
 // isRoot detects if the prompt indicates root user (# instead of $)
+// Only matches actual prompt patterns, not # in passwords or comments
 func isRoot(raw string) bool {
 	clean := regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`).ReplaceAllString(raw, "")
-	// Look for # at end of prompt line (root indicator)
 	lines := strings.Split(clean, "\n")
 	for _, l := range lines {
 		l = strings.TrimRight(l, " \t")
-		if strings.HasSuffix(l, "# ") || strings.HasSuffix(l, "#") {
+		// Kali root prompt: └─#
+		if strings.Contains(l, "└─#") {
 			return true
 		}
-		// Kali root: └─#
-		if strings.Contains(l, "└─#") {
+		// Standard root prompt: user@host:path# (must have @ or : before #)
+		if (strings.Contains(l, "@") || strings.Contains(l, ":")) && strings.HasSuffix(l, "#") {
 			return true
 		}
 	}
