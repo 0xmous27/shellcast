@@ -2,6 +2,7 @@ package recorder
 
 import (
 	"database/sql"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/0xmous27/shellcast/internal/highlight"
 	"github.com/0xmous27/shellcast/internal/parser"
+	"github.com/0xmous27/shellcast/internal/render"
 	"github.com/0xmous27/shellcast/internal/storage"
 	"github.com/0xmous27/shellcast/pkg/models"
 )
@@ -23,7 +25,7 @@ import (
 type Recorder struct {
 	db        *sql.DB
 	sessionID int64
-	lastCmdID int64
+	lastID    int64
 }
 
 func New(db *sql.DB, sessionID int64) *Recorder {
@@ -37,7 +39,7 @@ func (r *Recorder) Run() error {
 	}
 
 	c := exec.Command(shell)
-	c.Env = os.Environ()
+	c.Env = append(os.Environ(), fmt.Sprintf("SHELLCAST_SESSION=%d", r.sessionID))
 
 	ptmx, err := pty.Start(c)
 	if err != nil {
@@ -45,15 +47,15 @@ func (r *Recorder) Run() error {
 	}
 	defer ptmx.Close()
 
-	// Handle resize
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
+	// Resize
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGWINCH)
 	go func() {
-		for range sigCh {
+		for range ch {
 			pty.InheritSize(os.Stdin, ptmx)
 		}
 	}()
-	sigCh <- syscall.SIGWINCH
+	ch <- syscall.SIGWINCH
 
 	// Raw mode
 	old, err := setRaw(os.Stdin.Fd())
@@ -63,14 +65,13 @@ func (r *Recorder) Run() error {
 	defer restoreTerminal(os.Stdin.Fd(), old)
 
 	var mu sync.Mutex
-	var inputLine []byte      // current line being typed
-	var outputBuf []byte      // output since last command
-	var pendingCmd string     // command waiting for output
-	var continuationBuf string // multi-line command buffer (backslash)
-	var cmdStart time.Time    // when pending command was submitted
-	promptReady := false      // have we seen at least one prompt cycle
+	var outputBuf strings.Builder // accumulates ALL output between Enter presses
+	var pendingCmd string         // last detected command
+	var cmdStart time.Time
+	cmdCount := 0
+	enterCount := 0
 
-	// stdin → pty (capture input keystrokes)
+	// stdin → pty (just forward + count Enters)
 	go func() {
 		buf := make([]byte, 256)
 		for {
@@ -78,64 +79,54 @@ func (r *Recorder) Run() error {
 			if err != nil {
 				return
 			}
-			// Always forward to PTY immediately
 			ptmx.Write(buf[:n])
-
-			mu.Lock()
 			for _, b := range buf[:n] {
-				switch {
-				case b == '\r' || b == '\n':
-					cmd := strings.TrimSpace(string(inputLine))
-					inputLine = inputLine[:0]
-
-					if cmd == "" {
-						mu.Unlock()
-						goto next
-					}
-
-					// Multi-line command (backslash continuation)
-					if strings.HasSuffix(cmd, "\\") {
-						continuationBuf += cmd[:len(cmd)-1]
-						mu.Unlock()
-						goto next
-					}
-					if continuationBuf != "" {
-						cmd = continuationBuf + cmd
-						continuationBuf = ""
-					}
-
-					// Save previous command now (we have its output)
-					if pendingCmd != "" && promptReady {
-						r.saveCmd(pendingCmd, string(outputBuf), cmdStart)
-					}
-
-					// This new command becomes pending
-					pendingCmd = cmd
-					outputBuf = outputBuf[:0]
-					cmdStart = time.Now()
-					promptReady = true
-
-				case b == 127 || b == 8: // backspace/delete
-					if len(inputLine) > 0 {
-						inputLine = inputLine[:len(inputLine)-1]
-					}
-				case b == 3: // Ctrl+C — cancel current input
-					inputLine = inputLine[:0]
-				case b == 21: // Ctrl+U — clear line
-					inputLine = inputLine[:0]
-				case b == 0x1b: // ESC — start of escape sequence, skip
-					// We'll handle this by ignoring until we get a letter
-					// For now just don't add ESC to input
-				case b >= 32 && b < 127: // printable ASCII
-					inputLine = append(inputLine, b)
+				if b == '\r' || b == '\n' {
+					mu.Lock()
+					enterCount++
+					mu.Unlock()
 				}
 			}
-			mu.Unlock()
-		next:
 		}
 	}()
 
-	// pty → stdout (capture output)
+	// Process output: detect commands by finding prompt+command in the stream
+	// After each Enter, we wait for output to settle, then extract the command
+	// from the prompt line that appeared just before the output
+	go func() {
+		lastEnter := 0
+		for {
+			time.Sleep(300 * time.Millisecond)
+			mu.Lock()
+			if enterCount > lastEnter {
+				lastEnter = enterCount
+				mu.Unlock()
+				// Wait for output to settle
+				time.Sleep(200 * time.Millisecond)
+
+				mu.Lock()
+				raw := outputBuf.String()
+				// Try to extract command from the accumulated output
+				cmd := extractCommandFromOutput(raw)
+				if cmd != "" && cmd != pendingCmd {
+					// Save previous command
+					if pendingCmd != "" && cmdCount > 0 {
+						// Output for previous command = everything up to this new prompt
+						r.saveCmd(pendingCmd, raw, cmdStart)
+					}
+					pendingCmd = cmd
+					outputBuf.Reset()
+					cmdStart = time.Now()
+					cmdCount++
+				}
+				mu.Unlock()
+			} else {
+				mu.Unlock()
+			}
+		}
+	}()
+
+	// pty → stdout + capture
 	buf := make([]byte, 8192)
 	for {
 		n, err := ptmx.Read(buf)
@@ -145,21 +136,16 @@ func (r *Recorder) Run() error {
 			}
 			break
 		}
-		// Always display to user
 		os.Stdout.Write(buf[:n])
-
-		// Capture output for pending command
 		mu.Lock()
-		if pendingCmd != "" {
-			outputBuf = append(outputBuf, buf[:n]...)
-		}
+		outputBuf.Write(buf[:n])
 		mu.Unlock()
 	}
 
-	// Save final pending command
+	// Save last command
 	mu.Lock()
-	if pendingCmd != "" && promptReady {
-		r.saveCmd(pendingCmd, string(outputBuf), cmdStart)
+	if pendingCmd != "" && cmdCount > 0 {
+		r.saveCmd(pendingCmd, outputBuf.String(), cmdStart)
 	}
 	mu.Unlock()
 
@@ -167,22 +153,58 @@ func (r *Recorder) Run() error {
 	return nil
 }
 
-func (r *Recorder) saveCmd(input, rawOutput string, start time.Time) {
-	cleanOutput := parser.Clean(rawOutput)
-	duration := time.Since(start).Milliseconds()
+// extractCommandFromOutput finds the most recent command from terminal output.
+// It looks for prompt patterns ($ or #) followed by the command text.
+func extractCommandFromOutput(raw string) string {
+	clean := parser.Clean(raw)
+	lines := strings.Split(clean, "\n")
 
-	// Clean input — remove terminal response sequences that leak through
+	// Scan from the end to find the last prompt+command line
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		// Look for "$ command" or "# command" pattern
+		if idx := strings.LastIndex(line, "$ "); idx >= 0 {
+			cmd := strings.TrimSpace(line[idx+2:])
+			if cmd != "" && !isPromptOnly(cmd) {
+				return cmd
+			}
+		}
+		if idx := strings.LastIndex(line, "# "); idx >= 0 {
+			cmd := strings.TrimSpace(line[idx+2:])
+			if cmd != "" && !isPromptOnly(cmd) {
+				return cmd
+			}
+		}
+	}
+	return ""
+}
+
+func isPromptOnly(s string) bool {
+	// Filter out things that look like prompt fragments, not commands
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return true
+	}
+	// If it's just escape remnants
+	if len(s) < 2 {
+		return true
+	}
+	return false
+}
+
+func (r *Recorder) saveCmd(input, rawOutput string, start time.Time) {
 	input = parser.CleanInput(input)
 	if input == "" {
 		return
 	}
 
-	// Handle #mark
-	if isMark, tag := highlight.IsMark(input); isMark {
-		if r.lastCmdID > 0 {
-			storage.MarkCommand(r.db, r.lastCmdID, tag)
-		}
-		return // don't store the #mark itself as a command
+	cleanOutput := parser.Clean(rawOutput)
+
+	if len(rawOutput) > 100000 {
+		rawOutput = rawOutput[:100000]
+	}
+	if len(cleanOutput) > 50000 {
+		cleanOutput = cleanOutput[:50000]
 	}
 
 	cmd := &models.Command{
@@ -191,14 +213,25 @@ func (r *Recorder) saveCmd(input, rawOutput string, start time.Time) {
 		OutputRaw:   rawOutput,
 		OutputClean: cleanOutput,
 		Timestamp:   start,
-		DurationMs:  duration,
-		Highlight:   highlight.IsHighlight(input, cleanOutput),
+		DurationMs:  time.Since(start).Milliseconds(),
 	}
 
+	if isMark, tag := highlight.IsMark(input); isMark {
+		cmd.Marked = true
+		cmd.Tag = tag
+		if r.lastID > 0 {
+			storage.MarkCommand(r.db, r.lastID, tag)
+		}
+	}
+
+	cmd.Highlight = highlight.IsHighlight(input, cleanOutput)
 	id, _ := storage.SaveCommand(r.db, cmd)
-	r.lastCmdID = id
+	r.lastID = id
+
+	go render.GenerateProof(id, input, rawOutput, cleanOutput, "")
 }
 
+// Terminal raw mode
 type termState syscall.Termios
 
 func setRaw(fd uintptr) (*termState, error) {
