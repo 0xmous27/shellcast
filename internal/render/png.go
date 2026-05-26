@@ -36,14 +36,17 @@ func GenerateProof(cmdID int64, input, outputRaw, outputClean, outName string) (
 
 	// Extract prompt path from raw output (e.g. ~/payloads)
 	promptPath := extractPromptPath(outputRaw)
+	promptChar := "$"
+	if isRoot(outputRaw) {
+		promptChar = "#"
+	}
 
 	// Build content lines
 	var lines []string
-	// Show prompt with path: ~/payloads $  or just $ if no path found
 	if promptPath != "" {
-		lines = append(lines, fmt.Sprintf(`<span class="path">%s</span> <span class="p">$ %s</span>`, escHTML(promptPath), escHTML(input)))
+		lines = append(lines, fmt.Sprintf(`<span class="path">%s</span> <span class="p">%s %s</span>`, escHTML(promptPath), promptChar, escHTML(input)))
 	} else {
-		lines = append(lines, fmt.Sprintf(`<span class="p">$ %s</span>`, escHTML(input)))
+		lines = append(lines, fmt.Sprintf(`<span class="p">%s %s</span>`, promptChar, escHTML(input)))
 	}
 	if cleanedOutput != "" {
 		for _, l := range strings.Split(cleanedOutput, "\n") {
@@ -151,4 +154,22 @@ func extractPromptPath(raw string) string {
 	}
 
 	return ""
+}
+
+// isRoot detects if the prompt indicates root user (# instead of $)
+func isRoot(raw string) bool {
+	clean := regexp.MustCompile(`\x1b\[[0-9;?]*[A-Za-z]`).ReplaceAllString(raw, "")
+	// Look for # at end of prompt line (root indicator)
+	lines := strings.Split(clean, "\n")
+	for _, l := range lines {
+		l = strings.TrimRight(l, " \t")
+		if strings.HasSuffix(l, "# ") || strings.HasSuffix(l, "#") {
+			return true
+		}
+		// Kali root: └─#
+		if strings.Contains(l, "└─#") {
+			return true
+		}
+	}
+	return false
 }
